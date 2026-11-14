@@ -441,6 +441,7 @@ export function ManageBookings({
                     </h3>
                     <span className="text-xs text-[#c5d5e0] tabular-nums">
                       {results.length} {results.length === 1 ? "booking" : "bookings"}
+                      {mode === "email" && results.length > 1 ? ", oldest first" : ""}
                     </span>
                   </div>
 
@@ -471,7 +472,13 @@ export function ManageBookings({
                             <p className="mt-1 text-xs text-[#c5d5e0]">
                               {booking.name} ({booking.email})
                             </p>
-                            <p className="mt-1 text-xs text-[#a9becb] tabular-nums break-all">
+                            <p className="mt-1 text-xs text-[#a9becb] tabular-nums">
+                              Booked{" "}
+                              {isHydrated
+                                ? formatDateTimeReadable(booking.created_at)
+                                : `${booking.created_at.slice(0, 16).replace("T", " ")} UTC`}
+                            </p>
+                            <p className="mt-0.5 text-xs text-[#a9becb] tabular-nums break-all">
                               ID: {booking.id}
                             </p>
                           </div>

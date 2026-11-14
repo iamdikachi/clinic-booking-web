@@ -11,11 +11,25 @@ import { buildPreviewSampleSlots } from "@/lib/sample-schedule";
 import { BookingDesk } from "./BookingDesk";
 import { ManageBookings, type ManageBookingsHandle } from "./ManageBookings";
 
+function getScheduleLoadError(error: unknown): {
+  message: string;
+  code: string | null;
+} {
+  if (error instanceof ClinicApiError) {
+    return { message: error.message, code: error.code };
+  }
+  return {
+    message: "Unable to load the clinic schedule.",
+    code: null,
+  };
+}
+
 export function ClinicWorkspace() {
   const manageRef = useRef<ManageBookingsHandle>(null);
   const [slots, setSlots] = useState<Slot[]>([]);
   const [loading, setLoading] = useState(true);
   const [loadError, setLoadError] = useState<string | null>(null);
+  const [loadErrorCode, setLoadErrorCode] = useState<string | null>(null);
   const [isPreviewMode, setIsPreviewMode] = useState(false);
   const [selectedProvider, setSelectedProvider] = useState("");
   const [recentBookings, setRecentBookings] = useState<Booking[]>([]);
@@ -23,16 +37,15 @@ export function ClinicWorkspace() {
   const loadLiveSlots = useCallback(async () => {
     setLoading(true);
     setLoadError(null);
+    setLoadErrorCode(null);
     try {
       const liveSlots = await fetchSlots();
       setSlots(liveSlots);
       setIsPreviewMode(false);
     } catch (error) {
-      if (error instanceof ClinicApiError) {
-        setLoadError(error.message);
-      } else {
-        setLoadError("Unable to load the clinic schedule.");
-      }
+      const parsed = getScheduleLoadError(error);
+      setLoadError(parsed.message);
+      setLoadErrorCode(parsed.code);
     } finally {
       setLoading(false);
     }
@@ -48,16 +61,15 @@ export function ClinicWorkspace() {
         }
         setSlots(liveSlots);
         setLoadError(null);
+        setLoadErrorCode(null);
         setIsPreviewMode(false);
       } catch (error) {
         if (!active) {
           return;
         }
-        setLoadError(
-          error instanceof ClinicApiError
-            ? error.message
-            : "Unable to load the clinic schedule.",
-        );
+        const parsed = getScheduleLoadError(error);
+        setLoadError(parsed.message);
+        setLoadErrorCode(parsed.code);
       } finally {
         if (active) {
           setLoading(false);
@@ -73,6 +85,7 @@ export function ClinicWorkspace() {
   function handleEnablePreview() {
     setIsPreviewMode(true);
     setLoadError(null);
+    setLoadErrorCode(null);
     setSelectedProvider("");
     setSlots(buildPreviewSampleSlots());
   }
@@ -148,6 +161,7 @@ export function ClinicWorkspace() {
               slots={slots}
               loading={loading}
               loadError={loadError}
+              loadErrorCode={loadErrorCode}
               isPreviewMode={isPreviewMode}
               selectedProvider={selectedProvider}
               onProviderChange={setSelectedProvider}

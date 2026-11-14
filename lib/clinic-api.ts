@@ -30,10 +30,17 @@ export interface CreateBookingInput {
   email: string;
 }
 
+export type ClinicApiErrorCode =
+  | "api_not_configured"
+  | "api_auth_mismatch"
+  | "api_timeout"
+  | "api_unreachable";
+
 export class ClinicApiError extends Error {
   readonly status: number;
   readonly retryAfterSeconds: number | null;
   readonly isNetworkError: boolean;
+  readonly code: string | null;
 
   constructor(
     message: string,
@@ -41,6 +48,7 @@ export class ClinicApiError extends Error {
       status: number;
       retryAfterSeconds?: number | null;
       isNetworkError?: boolean;
+      code?: string | null;
     },
   ) {
     super(message);
@@ -48,28 +56,20 @@ export class ClinicApiError extends Error {
     this.status = options.status;
     this.retryAfterSeconds = options.retryAfterSeconds ?? null;
     this.isNetworkError = options.isNetworkError ?? false;
+    this.code = options.code ?? null;
   }
-}
-
-export function getApiBaseUrl(): string {
-  const raw = process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:3001";
-  return raw.replace(/\/+$/, "");
-}
-
-function getApiHeaders(extra?: Record<string, string>): HeadersInit {
-  const apiKey = process.env.NEXT_PUBLIC_API_KEY ?? "";
-  return {
-    "X-API-Key": apiKey,
-    ...extra,
-  };
 }
 
 async function parseErrorResponse(res: Response): Promise<ClinicApiError> {
   let message = `Request failed with status ${res.status}`;
+  let code: string | null = null;
   try {
-    const data = (await res.json()) as { error?: unknown };
+    const data = (await res.json()) as { error?: unknown; code?: unknown };
     if (typeof data.error === "string" && data.error.trim().length > 0) {
       message = data.error.trim();
+    }
+    if (typeof data.code === "string" && data.code.trim().length > 0) {
+      code = data.code.trim();
     }
   } catch {
     // Keep default status message when body is non-JSON.
@@ -87,6 +87,7 @@ async function parseErrorResponse(res: Response): Promise<ClinicApiError> {
   return new ClinicApiError(message, {
     status: res.status,
     retryAfterSeconds,
+    code,
   });
 }
 
@@ -94,20 +95,18 @@ async function requestJson<T>(
   path: string,
   init: RequestInit = {},
 ): Promise<T> {
-  const url = `${getApiBaseUrl()}${path}`;
+  const url = `/api${path}`;
   let response: Response;
   try {
     response = await fetch(url, {
       ...init,
-      headers: getApiHeaders(
-        init.headers as Record<string, string> | undefined,
-      ),
+      headers: init.headers,
       cache: "no-store",
     });
   } catch {
     throw new ClinicApiError(
-      `Unable to reach the clinic scheduling API at ${getApiBaseUrl()}.`,
-      { status: 0, isNetworkError: true },
+      "Unable to reach the scheduling service. Check your connection and retry.",
+      { status: 0, isNetworkError: true, code: "api_unreachable" },
     );
   }
 

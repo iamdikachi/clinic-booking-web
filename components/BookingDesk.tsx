@@ -16,7 +16,6 @@ import {
   formatDayKey,
   formatProviderName,
   formatTimeRange,
-  getApiBaseUrl,
   getLocalTimeZoneDescription,
   type Booking,
   type Slot,
@@ -24,10 +23,41 @@ import {
 import { useAccessibleFormSync } from "./useAccessibleFormSync";
 import { useIsHydrated } from "./useIsHydrated";
 
+function describeScheduleLoadError(
+  loadError: string,
+  loadErrorCode: string | null,
+): { title: string; detail: string } {
+  switch (loadErrorCode) {
+    case "api_not_configured":
+      return {
+        title: "Clinic scheduling API is not connected",
+        detail:
+          "This deployment is missing its server connection settings (CLINIC_API_URL and CLINIC_API_KEY) to reach clinic_api.",
+      };
+    case "api_auth_mismatch":
+      return {
+        title: "Clinic scheduling authorization failed",
+        detail:
+          "The web server's CLINIC_API_KEY was rejected by clinic_api. Check that the deployment's server key matches the backend.",
+      };
+    case "api_timeout":
+      return {
+        title: "Clinic scheduling server is taking longer to wake",
+        detail: `${loadError} Idle free-tier servers can take up to 30 seconds to warm up. Wait a moment and retry.`,
+      };
+    default:
+      return {
+        title: "Clinic scheduling server is unreachable",
+        detail: `${loadError} If the backend just started or is waking from sleep, wait a few seconds and retry.`,
+      };
+  }
+}
+
 interface BookingDeskProps {
   slots: Slot[];
   loading: boolean;
   loadError: string | null;
+  loadErrorCode?: string | null;
   isPreviewMode: boolean;
   selectedProvider: string;
   onProviderChange: (provider: string) => void;
@@ -42,6 +72,7 @@ export function BookingDesk({
   slots,
   loading,
   loadError,
+  loadErrorCode = null,
   isPreviewMode,
   selectedProvider,
   onProviderChange,
@@ -74,6 +105,8 @@ export function BookingDesk({
   const [rateLimitUntil, setRateLimitUntil] = useState<number | null>(null);
   const [nowTick, setNowTick] = useState<number>(0);
   const [referenceTime, setReferenceTime] = useState<number>(0);
+  const [openOnly, setOpenOnly] = useState(false);
+  const [wakingDelayElapsed, setWakingDelayElapsed] = useState(false);
   const [confirmedBooking, setConfirmedBooking] = useState<Booking | null>(
     null,
   );
@@ -113,17 +146,50 @@ export function BookingDesk({
     };
   }, [rateLimitUntil]);
 
+  // Show a calm waking notice if initial schedule fetch takes longer than 4s (e.g. cold start).
+  useEffect(() => {
+    if (!loading || slots.length > 0) {
+      return;
+    }
+    const resetTimer = window.setTimeout(() => {
+      setWakingDelayElapsed(false);
+    }, 0);
+    const wakeTimer = window.setTimeout(() => {
+      setWakingDelayElapsed(true);
+    }, 4_000);
+    return () => {
+      window.clearTimeout(resetTimer);
+      window.clearTimeout(wakeTimer);
+    };
+  }, [loading, slots.length]);
+
+  const showWakingNotice = loading && slots.length === 0 && wakingDelayElapsed;
+  const scheduleErrorCopy = loadError
+    ? describeScheduleLoadError(loadError, loadErrorCode)
+    : null;
+
   const providers = useMemo(() => {
     const unique = new Set(slots.map((s) => s.provider));
     return Array.from(unique).sort((a, b) => a.localeCompare(b));
   }, [slots]);
 
   const filteredSlots = useMemo(() => {
-    if (!selectedProvider) {
-      return slots;
-    }
-    return slots.filter((s) => s.provider === selectedProvider);
-  }, [slots, selectedProvider]);
+    return slots.filter((slot) => {
+      if (selectedProvider && slot.provider !== selectedProvider) {
+        return false;
+      }
+      if (openOnly) {
+        const isPast =
+          isHydrated && referenceTime > 0
+            ? new Date(slot.start).getTime() <= referenceTime
+            : false;
+        if (!slot.available || isPast) {
+          return false;
+        }
+      }
+      return true;
+    });
+  }, [slots, selectedProvider, openOnly, isHydrated, referenceTime]);
 
   const groupedByDay = useMemo(() => {
     const groups = new Map<
@@ -215,7 +281,7 @@ export function BookingDesk({
 
     if (isPreviewMode) {
       setSubmitError(
-        `Preview mode is read-only. Start clinic_api at ${getApiBaseUrl()} and click "Use live schedule" to submit a real booking.`,
+        'Preview mode is read-only. Click "Use live schedule" above to connect to clinic_api and submit a real booking.',
       );
       return;
     }
@@ -415,6 +481,12 @@ export function BookingDesk({
                     ? `${formatProviderName(bookedSlotDetails.provider)} (${formatDateTimeReadable(bookedSlotDetails.start)})`
                     : `Slot ${confirmedBooking.slot_id}`}
                 </dd>
+                <dd className="text-xs text-[var(--ink-secondary)] tabular-nums">
+                  Booked{" "}
+                  {isHydrated
+                    ? formatDateTimeReadable(confirmedBooking.created_at)
+                    : `${confirmedBooking.created_at.slice(0, 16).replace("T", " ")} UTC`}
+                </dd>
               </div>
               <div className="sm:col-span-2">
                 <dt className="text-[var(--ink-secondary)]">Booking ID</dt>
@@ -453,80 +525,91 @@ export function BookingDesk({
         </div>
       ) : (
         <div className="divide-y divide-[var(--border-subtle)]">
-          {/* Clinician filter */}
-          {providers.length > 0 && (
-            <div className="px-5 py-4 sm:px-7 bg-[#fafbfc]">
-              {providers.length <= 5 ? (
-                <fieldset>
-                  <legend className="text-sm font-medium text-[var(--ink)] mb-2.5">
-                    Filter by clinician
-                  </legend>
-                  <div className="flex flex-wrap gap-2">
+          {/* Clinician and availability filters */}
+          {slots.length > 0 && (
+            <div className="px-5 py-4 sm:px-7 bg-[#fafbfc] flex flex-col md:flex-row md:items-end justify-between gap-4">
+              {providers.length > 0 &&
+                (providers.length <= 5 ? (
+                  <fieldset>
+                    <legend className="text-sm font-medium text-[var(--ink)] mb-2.5">
+                      Filter by clinician
+                    </legend>
+                    <div className="flex flex-wrap gap-2">
+                      <label
+                        className={`clinical-touch-target inline-flex items-center gap-2 rounded-md border px-3.5 py-2 text-sm font-medium cursor-pointer transition-colors ${
+                          selectedProvider === ""
+                            ? "border-[var(--accent)] bg-[var(--accent-soft)] text-[var(--ink)]"
+                            : "border-[var(--border-control)] bg-white text-[var(--ink)] hover:bg-[var(--bg-muted)]"
+                        }`}
+                      >
+                        <input
+                          type="radio"
+                          name="clinician-filter"
+                          value=""
+                          checked={selectedProvider === ""}
+                          onChange={() => onProviderChange("")}
+                          className="h-4 w-4 accent-[var(--accent)]"
+                        />
+                        <span>All clinicians</span>
+                      </label>
+                      {providers.map((provider) => {
+                        const active = selectedProvider === provider;
+                        return (
+                          <label
+                            key={provider}
+                            className={`clinical-touch-target inline-flex items-center gap-2 rounded-md border px-3.5 py-2 text-sm font-medium cursor-pointer transition-colors ${
+                              active
+                                ? "border-[var(--accent)] bg-[var(--accent-soft)] text-[var(--ink)]"
+                                : "border-[var(--border-control)] bg-white text-[var(--ink)] hover:bg-[var(--bg-muted)]"
+                            }`}
+                          >
+                            <input
+                              type="radio"
+                              name="clinician-filter"
+                              value={provider}
+                              checked={active}
+                              onChange={() => onProviderChange(provider)}
+                              className="h-4 w-4 accent-[var(--accent)]"
+                            />
+                            <span>{formatProviderName(provider)}</span>
+                          </label>
+                        );
+                      })}
+                    </div>
+                  </fieldset>
+                ) : (
+                  <div className="max-w-xs">
                     <label
-                      className={`clinical-touch-target inline-flex items-center gap-2 rounded-md border px-3.5 py-2 text-sm font-medium cursor-pointer transition-colors ${
-                        selectedProvider === ""
-                          ? "border-[var(--accent)] bg-[var(--accent-soft)] text-[var(--ink)]"
-                          : "border-[var(--border-control)] bg-white text-[var(--ink)] hover:bg-[var(--bg-muted)]"
-                      }`}
+                      htmlFor={providerSelectId}
+                      className="block text-sm font-medium text-[var(--ink)] mb-1.5"
                     >
-                      <input
-                        type="radio"
-                        name="clinician-filter"
-                        value=""
-                        checked={selectedProvider === ""}
-                        onChange={() => onProviderChange("")}
-                        className="h-4 w-4 accent-[var(--accent)]"
-                      />
-                      <span>All clinicians</span>
+                      Filter by clinician
                     </label>
-                    {providers.map((provider) => {
-                      const active = selectedProvider === provider;
-                      return (
-                        <label
-                          key={provider}
-                          className={`clinical-touch-target inline-flex items-center gap-2 rounded-md border px-3.5 py-2 text-sm font-medium cursor-pointer transition-colors ${
-                            active
-                              ? "border-[var(--accent)] bg-[var(--accent-soft)] text-[var(--ink)]"
-                              : "border-[var(--border-control)] bg-white text-[var(--ink)] hover:bg-[var(--bg-muted)]"
-                          }`}
-                        >
-                          <input
-                            type="radio"
-                            name="clinician-filter"
-                            value={provider}
-                            checked={active}
-                            onChange={() => onProviderChange(provider)}
-                            className="h-4 w-4 accent-[var(--accent)]"
-                          />
-                          <span>{formatProviderName(provider)}</span>
-                        </label>
-                      );
-                    })}
+                    <select
+                      id={providerSelectId}
+                      value={selectedProvider}
+                      onChange={(e) => onProviderChange(e.target.value)}
+                      className="clinical-input"
+                    >
+                      <option value="">All clinicians</option>
+                      {providers.map((provider) => (
+                        <option key={provider} value={provider}>
+                          {formatProviderName(provider)}
+                        </option>
+                      ))}
+                    </select>
                   </div>
-                </fieldset>
-              ) : (
-                <div className="max-w-xs">
-                  <label
-                    htmlFor={providerSelectId}
-                    className="block text-sm font-medium text-[var(--ink)] mb-1.5"
-                  >
-                    Filter by clinician
-                  </label>
-                  <select
-                    id={providerSelectId}
-                    value={selectedProvider}
-                    onChange={(e) => onProviderChange(e.target.value)}
-                    className="clinical-input"
-                  >
-                    <option value="">All clinicians</option>
-                    {providers.map((provider) => (
-                      <option key={provider} value={provider}>
-                        {formatProviderName(provider)}
-                      </option>
-                    ))}
-                  </select>
-                </div>
-              )}
+                ))}
+
+              <label className="clinical-touch-target inline-flex items-center gap-2 rounded-md border border-[var(--border-control)] bg-white px-3.5 py-2 text-sm font-medium text-[var(--ink)] hover:bg-[var(--bg-muted)] transition-colors cursor-pointer shrink-0 self-start md:self-end">
+                <input
+                  type="checkbox"
+                  checked={openOnly}
+                  onChange={(e) => setOpenOnly(e.target.checked)}
+                  className="h-4 w-4 accent-[var(--accent)]"
+                />
+                <span>Available only</span>
+              </label>
             </div>
           )}
 
@@ -537,6 +620,12 @@ export function BookingDesk({
                 <p className="text-sm font-medium text-[var(--ink)]">
                   Loading live appointment windows...
                 </p>
+                {showWakingNotice && (
+                  <p className="text-sm text-[var(--ink-secondary)] prose-measure">
+                    Waking the clinic scheduling server after idle time. Cold
+                    starts can take up to 30 seconds.
+                  </p>
+                )}
                 <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
                   <div className="h-16 rounded-md bg-[var(--bg-muted)]" />
                   <div className="h-16 rounded-md bg-[var(--bg-muted)]" />
@@ -544,18 +633,16 @@ export function BookingDesk({
                   <div className="h-16 rounded-md bg-[var(--bg-muted)]" />
                 </div>
               </div>
-            ) : loadError && slots.length === 0 ? (
+            ) : loadError && slots.length === 0 && scheduleErrorCopy ? (
               <div
                 role="status"
                 className="rounded-md border border-[#d6b69d] bg-[#fdf8f3] p-5"
               >
                 <h3 className="text-base font-semibold text-[var(--ink)]">
-                  Clinic scheduling server is unreachable
+                  {scheduleErrorCopy.title}
                 </h3>
                 <p className="mt-1.5 text-sm text-[var(--ink-secondary)] prose-measure">
-                  {loadError} Start <code className="font-mono text-xs bg-white px-1.5 py-0.5 rounded border border-[var(--border-subtle)]">clinic_api</code> on{" "}
-                  <code className="font-mono text-xs bg-white px-1.5 py-0.5 rounded border border-[var(--border-subtle)]">{getApiBaseUrl()}</code>{" "}
-                  with PostgreSQL running, then retry.
+                  {scheduleErrorCopy.detail}
                 </p>
                 <div className="mt-4 flex flex-wrap gap-2.5">
                   <button
@@ -577,39 +664,56 @@ export function BookingDesk({
             ) : groupedByDay.length === 0 ? (
               <div className="rounded-md border border-[var(--border-subtle)] bg-[var(--bg-canvas)] p-5">
                 <h3 className="text-base font-semibold text-[var(--ink)]">
-                  No appointment windows posted
+                  {openOnly && slots.length > 0
+                    ? "No open windows match your filter"
+                    : "No appointment windows posted"}
                 </h3>
                 <p className="mt-1.5 text-sm text-[var(--ink-secondary)] prose-measure">
-                  {selectedProvider
-                    ? `No slots are currently listed for ${formatProviderName(selectedProvider)}.`
-                    : "The clinic schedule is empty. Seed appointment slots via POST /reset in clinic_api and refresh."}
+                  {openOnly && slots.length > 0
+                    ? selectedProvider
+                      ? `All listed slots for ${formatProviderName(selectedProvider)} are currently booked or already started.`
+                      : "All currently listed appointment windows are booked or have already started."
+                    : selectedProvider
+                      ? `No slots are currently listed for ${formatProviderName(selectedProvider)}.`
+                      : "No clinic slots are posted yet. Refresh after adding schedule windows (or seeding slots via POST /reset in clinic_api)."}
                 </p>
                 <div className="mt-4 flex flex-wrap gap-2.5">
+                  {openOnly && slots.length > 0 && (
+                    <button
+                      type="button"
+                      onClick={() => setOpenOnly(false)}
+                      className="clinical-touch-target inline-flex items-center justify-center rounded-md bg-[var(--accent)] px-4 py-2 text-sm font-medium text-white hover:bg-[var(--accent-hover)] cursor-pointer"
+                    >
+                      Show all windows
+                    </button>
+                  )}
                   {selectedProvider ? (
                     <button
                       type="button"
                       onClick={() => onProviderChange("")}
-                      className="clinical-touch-target inline-flex items-center justify-center rounded-md bg-[var(--accent)] px-4 py-2 text-sm font-medium text-white hover:bg-[var(--accent-hover)] cursor-pointer"
+                      className="clinical-touch-target inline-flex items-center justify-center rounded-md border border-[var(--border-control)] bg-white px-4 py-2 text-sm font-medium text-[var(--ink)] hover:bg-[var(--bg-muted)] cursor-pointer"
                     >
                       Show all clinicians
                     </button>
                   ) : (
-                    <>
-                      <button
-                        type="button"
-                        onClick={() => void onRefresh()}
-                        className="clinical-touch-target inline-flex items-center justify-center rounded-md bg-[var(--accent)] px-4 py-2 text-sm font-medium text-white hover:bg-[var(--accent-hover)] cursor-pointer"
-                      >
-                        Refresh schedule
-                      </button>
-                      <button
-                        type="button"
-                        onClick={onEnablePreview}
-                        className="clinical-touch-target inline-flex items-center justify-center rounded-md border border-[var(--border-control)] bg-white px-4 py-2 text-sm font-medium text-[var(--ink)] hover:bg-[var(--bg-muted)] cursor-pointer"
-                      >
-                        Preview sample schedule
-                      </button>
-                    </>
+                    !openOnly && (
+                      <>
+                        <button
+                          type="button"
+                          onClick={() => void onRefresh()}
+                          className="clinical-touch-target inline-flex items-center justify-center rounded-md bg-[var(--accent)] px-4 py-2 text-sm font-medium text-white hover:bg-[var(--accent-hover)] cursor-pointer"
+                        >
+                          Refresh schedule
+                        </button>
+                        <button
+                          type="button"
+                          onClick={onEnablePreview}
+                          className="clinical-touch-target inline-flex items-center justify-center rounded-md border border-[var(--border-control)] bg-white px-4 py-2 text-sm font-medium text-[var(--ink)] hover:bg-[var(--bg-muted)] cursor-pointer"
+                        >
+                          Preview sample schedule
+                        </button>
+                      </>
+                    )
                   )}
                 </div>
               </div>
@@ -620,8 +724,8 @@ export function BookingDesk({
                 </legend>
                 {isPreviewMode && (
                   <div className="mb-4 rounded-md border border-[#d6b69d] bg-[#fdf8f3] px-3.5 py-2.5 text-sm text-[var(--ink)]">
-                    Showing a read-only sample schedule because{" "}
-                    <code className="font-mono text-xs">{getApiBaseUrl()}</code> is offline.
+                    Showing a read-only sample schedule while the live clinic API
+                    is offline.
                   </div>
                 )}
                 <div className="space-y-6">

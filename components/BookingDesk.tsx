@@ -32,13 +32,13 @@ function describeScheduleLoadError(
       return {
         title: "Clinic scheduling API is not connected",
         detail:
-          "This deployment is missing its server connection settings (CLINIC_API_URL and CLINIC_API_KEY) to reach clinic_api.",
+          "This deployment is missing its server connection settings (CLINIC_API_URL / API_URL and CLINIC_API_KEY / API_KEY) to reach clinic_api.",
       };
     case "api_auth_mismatch":
       return {
         title: "Clinic scheduling authorization failed",
         detail:
-          "The web server's CLINIC_API_KEY was rejected by clinic_api. Check that the deployment's server key matches the backend.",
+          "The web server's CLINIC_API_KEY / API_KEY was rejected by clinic_api. Check that the deployment's server key matches the backend.",
       };
     case "api_timeout":
       return {

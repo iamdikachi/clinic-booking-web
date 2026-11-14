@@ -16,11 +16,13 @@ interface UpstreamConfig {
 function resolveUpstreamConfig(): UpstreamConfig | null {
   const rawUrl =
     process.env.CLINIC_API_URL?.trim() ||
+    process.env.API_URL?.trim() ||
     process.env.NEXT_PUBLIC_API_URL?.trim() ||
     (process.env.NODE_ENV === "development" ? "http://localhost:3001" : "");
 
   const apiKey =
     process.env.CLINIC_API_KEY?.trim() ||
+    process.env.API_KEY?.trim() ||
     process.env.NEXT_PUBLIC_API_KEY?.trim() ||
     "";
 

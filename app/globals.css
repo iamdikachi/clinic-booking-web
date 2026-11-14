@@ -1,26 +1,219 @@
 @import "tailwindcss";
 
 :root {
-  --background: #ffffff;
-  --foreground: #171717;
+  --bg-canvas: #f5f7f9;
+  --bg-panel: #ffffff;
+  --bg-muted: #ebf0f4;
+  --band-navy: #0e2a38;
+  --band-navy-elevated: #143749;
+  --ink: #10212b;
+  --ink-secondary: #435663;
+  --border-subtle: #cfd8e0;
+  --border-control: #5e7180;
+  --accent: #0b5e5e;
+  --accent-hover: #084747;
+  --accent-soft: #e3f1f0;
+  --danger: #b42318;
+  --danger-soft: #fdf2f2;
+  --focus-ring: #0b5e5e;
 }
 
 @theme inline {
-  --color-background: var(--background);
-  --color-foreground: var(--foreground);
-  --font-sans: var(--font-geist-sans);
-  --font-mono: var(--font-geist-mono);
+  --color-canvas: var(--bg-canvas);
+  --color-panel: var(--bg-panel);
+  --color-muted: var(--bg-muted);
+  --color-navy: var(--band-navy);
+  --color-ink: var(--ink);
+  --color-ink-secondary: var(--ink-secondary);
+  --color-accent: var(--accent);
+  --font-sans: var(--font-public-sans), system-ui, -apple-system, sans-serif;
+  --font-display: var(--font-newsreader), Georgia, serif;
 }
 
-@media (prefers-color-scheme: dark) {
-  :root {
-    --background: #0a0a0a;
-    --foreground: #ededed;
+html {
+  color-scheme: light;
+  scroll-behavior: smooth;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  html {
+    scroll-behavior: auto;
+  }
+
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
   }
 }
 
 body {
-  background: var(--background);
-  color: var(--foreground);
-  font-family: Arial, Helvetica, sans-serif;
+  background-color: var(--bg-canvas);
+  color: var(--ink);
+  font-family: var(--font-sans);
+  line-height: 1.55;
+  text-align: start;
+}
+
+/* Balanced display headings & readable long-form paragraphs */
+.font-display-heading {
+  font-family: var(--font-display);
+  text-wrap: balance;
+}
+
+.prose-measure {
+  max-width: 62ch;
+  text-wrap: pretty;
+}
+
+.tabular-nums {
+  font-variant-numeric: tabular-nums;
+}
+
+/* Visually hidden utility that allows skip links and active controls to surface */
+.visually-hidden:where(:not(:focus-within, :active)) {
+  position: absolute !important;
+  clip-path: inset(50%) !important;
+  overflow: hidden !important;
+  width: 1px !important;
+  height: 1px !important;
+  margin: -1px !important;
+  padding: 0 !important;
+  border: 0 !important;
+  white-space: nowrap !important;
+}
+
+.skip-link:focus {
+  position: fixed;
+  inset-block-start: 1rem;
+  inset-inline-start: 1rem;
+  z-index: 60;
+  background: var(--band-navy);
+  color: #ffffff;
+  padding: 0.75rem 1.25rem;
+  border-radius: 0.375rem;
+  font-weight: 600;
+  text-decoration: none;
+  outline: 3px solid #ffffff;
+  outline-offset: 2px;
+}
+
+/* Consistent accessible keyboard focus rings */
+:where(a:any-link, button, input, select, textarea, summary, [tabindex]):focus-visible {
+  outline: 3px solid var(--focus-ring);
+  outline-offset: 2px;
+}
+
+.navy-surface :where(a:any-link, button, input, select, textarea, [tabindex]):focus-visible {
+  outline: 3px solid #7ce0dc;
+  outline-offset: 2px;
+}
+
+/* Accessible post-interaction form validation (:user-invalid + fallback) */
+.clinical-input {
+  font: inherit;
+  font-size: max(1rem, 1em);
+  min-block-size: 3rem;
+  border: 1.5px solid var(--border-control);
+  background-color: var(--bg-panel);
+  color: var(--ink);
+  border-radius: 0.375rem;
+  padding: 0.625rem 0.875rem;
+  width: 100%;
+  box-sizing: border-box;
+  transition: border-color 140ms ease, background-color 140ms ease;
+}
+
+.navy-surface .clinical-input {
+  border-color: #8ba3b5;
+  background-color: #0b222e;
+  color: #ffffff;
+}
+
+.navy-surface .clinical-input::placeholder {
+  color: #a9becb;
+}
+
+.clinical-input:is(:user-invalid, .user-invalid-fallback) {
+  border-color: var(--danger);
+  background-color: var(--danger-soft);
+  color: var(--ink);
+}
+
+.navy-surface .clinical-input:is(:user-invalid, .user-invalid-fallback) {
+  border-color: #fda29b;
+  background-color: #2b1418;
+  color: #ffffff;
+}
+
+.clinical-input:is(:user-valid, .user-valid-fallback) {
+  border-color: var(--accent);
+}
+
+.navy-surface .clinical-input:is(:user-valid, .user-valid-fallback) {
+  border-color: #6ee7b7;
+}
+
+.field-error-msg {
+  display: none;
+  margin-top: 0.375rem;
+  font-size: 0.875rem;
+  line-height: 1.4;
+  color: var(--danger);
+}
+
+.navy-surface .field-error-msg {
+  color: #fecaca;
+}
+
+.clinical-input:is(:user-invalid, .user-invalid-fallback) ~ .field-error-msg,
+.field-error-msg[data-visible="true"] {
+  display: flex;
+  align-items: flex-start;
+  gap: 0.375rem;
+}
+
+@media (pointer: coarse) {
+  .clinical-input,
+  .clinical-touch-target {
+    min-block-size: 3.25rem;
+  }
+}
+
+/* Native <dialog> modal scroll containment & backdrop */
+dialog.clinical-dialog {
+  margin: auto;
+  border: 1px solid var(--border-subtle);
+  border-radius: 0.5rem;
+  background: var(--bg-panel);
+  color: var(--ink);
+  max-width: min(29rem, calc(100vw - 2rem));
+  width: 100%;
+  padding: 0;
+  box-shadow: 0 24px 48px -12px rgba(14, 42, 56, 0.28);
+}
+
+dialog.clinical-dialog:modal {
+  overscroll-behavior: contain;
+}
+
+dialog.clinical-dialog::backdrop {
+  background: rgba(14, 42, 56, 0.62);
+  overflow: hidden;
+  overscroll-behavior: contain;
+}
+
+@media (forced-colors: active) {
+  .clinical-input,
+  .slot-option-card,
+  dialog.clinical-dialog {
+    border: 2px solid ButtonText;
+  }
+
+  .slot-option-card[data-selected="true"] {
+    outline: 3px solid Highlight;
+    outline-offset: 2px;
+  }
 }
